@@ -1,0 +1,5 @@
+# Ignore blackbox log files and folders
+*.bbl.csv
+*.csv
+*.mat
+Chirp Tests/
