@@ -10,17 +10,59 @@ addpath lib\
 % - evaluate "flightModeFlags" for sinarg evaluation
 % - figure out motor_magic_offset <- can't remember atm
 
+% original code
+% flight_folder = '20250420';
+% log_name = '20250420_apex5_00.bbl.csv';
+%flight_folder = '20250430_supafly';
+%log_name = '20250430_unknown_00.bbl.csv';
+%file_path = fullfile(flight_folder, log_name);
+
+%------------
+
+% Clear workspace and add library path
+clc, clear variables
+addpath lib\
+
 % choose an axis: 1: roll, 2: pitch, 3: yaw
 ind_ax = 1;
 
 % define quad and path to *.bbl.csv file
 quad = 'unknown';
 
-% flight_folder = '20250420';
-% log_name = '20250420_apex5_00.bbl.csv';
-flight_folder = '20250430_supafly';
-log_name = '20250430_unknown_00.bbl.csv';
-file_path = fullfile(flight_folder, log_name);
+% Add bf_function_libary to MATLAB path
+lib_path = fullfile(pwd, 'bf_function_libary');
+if ~exist(lib_path, 'dir')
+    error('Library folder not found: %s. Please ensure bf_function_libary is in the repository.', lib_path);
+end
+addpath(lib_path);
+
+% Global variable to store log file path
+global last_file_path
+if isempty(last_file_path)
+    last_file_path = fullfile(pwd, 'Chirp Tests', '08.08.91.1.csv');
+end
+
+% Prompt for log file with GUI
+disp('Using last log file: ' + string(last_file_path));
+change_file = input('Change log file? [y/N]: ', 's');
+if strcmpi(change_file, 'y')
+    [log_name, log_path] = uigetfile({'*.csv', 'CSV Files (*.csv)'}, 'Select Blackbox Log File', ...
+        fullfile(pwd, 'Chirp Tests'));
+    if isequal(log_name, 0)
+        error('No log file selected.');
+    end
+    file_path = fullfile(log_path, log_name);
+else
+    file_path = last_file_path;
+end
+if ~exist(file_path, 'file')
+    error('Log file not found: %s', file_path);
+end
+
+% Store selected file path
+last_file_path = file_path;
+
+%--------
 
 % parameters
 do_compensate_iterm   = false;
@@ -39,6 +81,11 @@ linewidth = 1.2;
 set(0, 'defaultAxesColorOrder', get_my_colors);
 pos_bode = [0.1514, 0.5838-0.2, 0.7536, 0.3472+0.2; ... % this is a bit hacky
             0.1514, 0.1100    , 0.7536, 0.1917    ];
+
+
+% diagnostic plots
+do_show_spec_figures = true;
+do_insert_legends = true;
 
 % bodeoptions
 opt = bodeoptions('cstprefs');
@@ -105,6 +152,24 @@ T_eval_tot = size(data(ind_eval,ind.sinarg), 1) * Ts_log
 % calculate average throttle
 throttle_avg = median(data(ind_eval,ind.setpoint(4))) / 1.0e3;
 
+
+%Log Validation
+tic
+try
+    load([file_path(1:end-4), '.mat'])
+catch exception
+    data = readmatrix(file_path, 'NumHeaderLines', Nheader);
+    if any(isnan(data(:)))
+        warning('Log file contains NaN values. Check CSV format.');
+        nan_rows = any(isnan(data), 2);
+        disp('Rows with NaN:');
+        disp(data(nan_rows, :));
+        error('Invalid log file. Please export as CSV from Blackbox Explorer.');
+    end
+    save([file_path(1:end-4), '.mat'], 'data');
+end
+[Ndata, Nsig] = size(data)
+toc
 
 %% show gyro to select Teval and spectras (gyro and pid sum)
 
@@ -289,64 +354,63 @@ set(findall(gcf, 'type', 'line'), 'linewidth', linewidth)
 
 %% new controller and filter parameters
 
-tic
-
-pid_axis = {'rollPID', 'pitchPID', 'yawPID'};
-
-% PID parameters
-fprintf('   used PID parameters are:\n');
-fprintf(['      ', pid_axis{ind_ax}, ':  %d, %d, %d\n'], ...
-    para.(pid_axis{ind_ax})(1:3));
-
-% inform user about parameters
-para_used_fieldnames = fieldnames(para_used);
-Npara_used = size(para_used_fieldnames, 1);
-fprintf('   used parameters are:\n');
-for i = 1:Npara_used
-    fprintf(['      ', para_used_fieldnames{i},': %d\n'], eval(['round(', 'para_used.', para_used_fieldnames{i}, ');']));
-end
-
-% copy parameters (in case you dont change anything)
-para_new = para;
-
-% you can use the following command to generate the text
-% get_switch_case_text_from_para(para)
+quad = input('Enter the settings type (e.g., "Log_Settings" or "Default_Settings"): ', 's');
 
 switch quad
-    case 'unknown'
-        % type: 0: PT1, 1: BIQUAD, 2: PT2, 3: PT3
-        para_new.gyro_lpf            = 0;       % dono what this is
-        para_new.gyro_lowpass_hz     = 0;       % frequency of gyro lpf 1
-        para_new.gyro_soft_type      = 0;       % type of gyro lpf 1
-        para_new.gyro_lowpass_dyn_hz = [0, 0];  % dyn gyro lpf overwrites gyro_lowpass_hz
-        para_new.gyro_lowpass2_hz    = 775;     % frequency of gyro lpf 2
-        para_new.gyro_soft2_type     = 0;       % type of gyro lpf 2
-        para_new.gyro_notch_hz       = [0, 0]; % frequency of gyro notch 1 and 2
-        para_new.gyro_notch_cutoff   = get_fcut_from_D_and_fcenter([0.00, 0.00], para_new.gyro_notch_hz); % damping of gyro notch 1 and 2
-        para_new.dterm_lpf_hz        = 130;       % frequency of dterm lpf 1
-        para_new.dterm_filter_type   = 3;       % type of dterm lpf 1
-        para_new.dterm_lpf_dyn_hz    = [0, 0];  % dyn dterm lpf overwrites dterm_lpf_hz
-        para_new.dterm_lpf2_hz       = 0;     % frequency of dterm lpf 2
-        para_new.dterm_filter2_type  = 0;       % type of dterm lpf 2
-        para_new.dterm_notch_hz      = 0;     % frequency of dterm notch
-        para_new.dterm_notch_cutoff  = get_fcut_from_D_and_fcenter(0.00, para_new.dterm_notch_hz); % damping of dterm notch
-        para_new.yaw_lpf_hz          = 200;     % frequency of yaw lpf (pt1)
+    case 'Log_Settings'
+        % Settings initialized to log values
+        para_new = para; % Copy all log settings
         switch ind_ax
-            case 1 % roll: [59, 89, 35, 35]
-                P_new       = 0.9 * 59;
-                I_ratio_new = 89/89;
-                D_new       = 0.9 * 35;
-            case 2 % pitch: [74, 113, 48, 48]
-                P_new       = 74;
-                I_ratio_new = 113/113;
-                D_new       = 48;
-            case 3 % yaw: [59, 89, 0, 0]
-                P_new       = 0.8 * 59;
-                I_ratio_new = 89/89;
-                D_new       = 3;
+            case 1 % roll
+                P_new = para.rollPID(1); % Dynamic extraction
+                I_ratio_new = para.rollPID(2) / para.rollPID(1);
+                D_new = para.rollPID(3);
+            case 2 % pitch: Update with your Betaflight settings
+                P_new = 60; % Placeholder, replace with para.pitchPID(1)
+                I_ratio_new = 97/60;
+                D_new = 35;
+            case 3 % yaw: Update with your Betaflight settings
+                P_new = 45; % Placeholder, replace with para.yawPID(1)
+                I_ratio_new = 80/45;
+                D_new = 0;
+        end
+    case 'Default_Settings'
+        % Betaflight default settings for a 5-inch quad
+        para_new.gyro_lpf = 0;
+        para_new.gyro_lowpass_hz = 200;
+        para_new.gyro_soft_type = 0; % PT1
+        para_new.gyro_lowpass_dyn_hz = [0, 0];
+        para_new.gyro_lowpass2_hz = 400;
+        para_new.gyro_soft2_type = 0; % PT1
+        para_new.gyro_notch_hz = [0, 0];
+        para_new.gyro_notch_cutoff = get_fcut_from_D_and_fcenter([0.00, 0.00], para_new.gyro_notch_hz);
+        para_new.dterm_lpf_hz = 150;
+        para_new.dterm_filter_type = 0; % PT1
+        para_new.dterm_lpf_dyn_hz = [0, 0];
+        para_new.dterm_lpf2_hz = 0;
+        para_new.dterm_filter2_type = 0;
+        para_new.dterm_notch_hz = 0;
+        para_new.dterm_notch_cutoff = 0;
+        para_new.yaw_lpf_hz = 0;
+        switch ind_ax
+            case 1 % roll
+                P_new = 46;
+                I_ratio_new = 70/46;
+                D_new = 23;
+            case 2 % pitch
+                P_new = 48;
+                I_ratio_new = 72/48;
+                D_new = 25;
+            case 3 % yaw
+                P_new = 45;
+                I_ratio_new = 80/45;
+                D_new = 0;
         end
     otherwise
-        warning(' no valid quad selected');
+        warning('No valid settings selected. Using current PID values from log.');
+        P_new = para.(pid_axis{ind_ax})(1);
+        I_ratio_new = 1;
+        D_new = para.(pid_axis{ind_ax})(3);
 end
 
 % scale to new PID parameters
